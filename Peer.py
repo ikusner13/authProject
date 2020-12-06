@@ -1,16 +1,17 @@
 # Each peer is set up knowing the policy of the resource exhanges, along with knowing know holds each resource 
 
-''' READ
+''' 
 
 ### MESSAGE FORMAT ###
 
-message format is {type: String, sender: String, reciever: String, request: List[] or String}
+message format is {type: String, sender: String, reciever: String, resource: List[] or String}
 
 request is a List if type is 'request'. request can be a String if type is 'offer'
 
-inside request is {request: List or String, issuer: String} if type is 'request'. {request: List or String} if type is 'offer'
 
-request is a List if multipe requests/offers to/for a resource are being made
+
+inside request is {request: List or String, issuer: String} if type is 'request'. {request: List or String} if type is 'offer'
+if only one credential is requested, then request should be String, not List. If multiple use List
 
 
 ### PEER ###
@@ -21,15 +22,36 @@ Peer will hold the credentials that it recieves as offers from other resources
 
 Peer will also be initialized knowing which peer holds what resource 
 
+
+### POLICY ###
+
+Policy format is {resource: resources required or True(no additional resources required)}
+
+if resources are required, resources must be in array 
+ex. 'c1':['c2','c3'] , 'c3': ['c4']
+
+if no additional resources are required, format is { 'resource': True }
+
+
+
+### OUTPUT ###
+
+program will output a success message if the initial request was able to be completed
+
+program will out an error message if there was an error with the initial request (lik requesting an invalid resource)
+
+Change 'showMessages' flag below to show/hide the message chain of the authorization
 '''
+showMessages = True
+
 class Peers:
   def __init__(self,name):
     self.name = name # name of Peer (client, rs, as_1, as_2)
     self.policy = {
       'c1': ['c2','c3'],
       'c2': True,
-      'c3':['c4'],
-      'c4':True
+      'c3': ['c4'],
+      'c4': True
     }
     self.credentials_recieved = []
     self.holders = {
@@ -42,10 +64,13 @@ class Peers:
 
   # given unresolved messsages and list of resources that correspond to an unresolved message, find which sender to return to
   def findSender(self,messages,return_list):
-      resources = []
       for m in messages:
+        resources = []
         for r in m['resource']:
-          resources.append(r['resource'])
+          if(isinstance(r['resource'],list)):
+            resources.extend(r['resource'])
+          else:
+            resources.append(r['resource'])
         if set(resources) == set(return_list):
           return m['sender']
 
@@ -55,96 +80,95 @@ class Peers:
       valid = True
       for item in resources:
         for r in item:
-          #print('m',m)
-          #print('holder', self.holders[r], self.name)
-          if(self.holders[r] == self.name):
-            if(isinstance(self.policy[r],list)):
-              if(set(self.policy[r]).intersection(set(credentials)) == set(self.policy[r])):
-                #print('HAS VALID CREDENTIALS FOR',r)
-                pass
-              else:
-                valid = False
-                #print("DOES NOT HAVE VALID CREDENTIAL FOR", r)
+          if(isinstance(r,list)):
+            for c in r:
+              if(self.holders[c] == self.name):
+               if(isinstance(self.policy[c],list)):
+                if(set(self.policy[c]).intersection(set(credentials)) == set(self.policy[c])):
+                  pass
+                else:
+                  valid = False
+
+          else:
+            if(self.holders[r] == self.name):
+              if(isinstance(self.policy[r],list)):
+                if(set(self.policy[r]).intersection(set(credentials)) == set(self.policy[r])):
+                  pass
+                else:
+                  valid = False
       return valid
   
   def requestError(self,message):
+      error = False
       for resources in message['resource']:
-          print('resources',resources)
+        if(isinstance(resources['resource'],list)):
+          for r in resources['resource']:
+            if(r not in self.policy):
+              error = True
+        else:  
           if(resources['resource'] not in self.policy):
-            return True
-      
-      return False
+            error = True
+      return error
           
 
   
 
   def resolver(self,message,Mrec):
-    print('message',message)
-    print('message resource',message['resource'])
-    print('input message', message)
-
     if(message['type'] == 'request'):
 
+      #if request to resource that doesn't exist, then return error message
       if(self.requestError(message)):
-        return ['INVALID REQUEST ERROR']
+        return [{'type':'error', 'content':'INVALID REQUEST ERROR for {}'.format(message['resource'])}]
 
       return_messages = []
 
+      # all requested resources 
       req_resources = [r['resource'] for r in message['resource']]
+
+      # if request is for list of credentials make req_resources a list instead of a list of list made above 
       if(len(req_resources) == 1 and isinstance(req_resources[0],list)):
         req_resources = req_resources[0]
         
 
+
       my_recieved = [request for request in Mrec if request['reciever'] == self.name and request['type'] == 'request']
-      #print('request my_recieved', my_recieved)
-      print('req res', req_resources)
-      #print('credentilas', self.credentials_recieved)
-      #print('\n')
       to_offer = []
+
+
       for requests in message['resource']:
         resource = requests['resource']
 
         held = [h for h in self.holders if self.holders[h] == self.name]
-        print('held',held)
-
-        print('resource', resource)
         have = self.credentials_recieved + held
-        print('have',have)
+
+        # make resource a list if it is not
         if not isinstance(resource,list):
           resource = [resource]
+
         # if reciever is the issuer of the resource 
+        # or the peer has the requested resources necessary to make an offer 
         if(requests['issuer'] == self.name or set(have).intersection(req_resources) == set(req_resources)):
-         # print('issuer is self')
-          #print('before loop',resource)
           for r in resource:
             needed_resources = self.policy[r]
-            print('needed_resources', needed_resources)
-            print('req_resour',req_resources)
-            print('inter',set(have).intersection(req_resources))
+            # if resource is unlocked by default and the peer can make an offer
             if(needed_resources == True and set(have).intersection(req_resources) == set(req_resources)):
-              print('resource is unlocked')
               if r in req_resources:
-               # print(r,'in',req_resources)
-                #req_resources.pop(req_resources.index(r))
-               # print('after pop',req_resources)
-              #if(set(self.credentials_recieved) == set(req_resources) or len(req_resources) == 0):
-               # print('offer',r)
                 to_offer.append(r)
             elif(needed_resources != True):
-              #print('resource not unlocked')
               test = []
-              print('needed resources',needed_resources)
+
+              # list of resources needed to be requested sorted by sender
               for n in needed_resources:
                 issuer = self.holders[n]
                 test.append({'resource': n, 'issuer': issuer})
               newList = sorted(test, key=lambda k: k['issuer'])
-              #print('newList',newList)
+
+              # group all credentials of one issuer into one list
+              # after, will have list of list of grouped credentials by issuer
               temp1 = []
               temp2 = []
               issuer = newList[0]['issuer']
               for i in newList:
-                #issuer = i['issuer']
-                #print('issuer',issuer)
                 if i['issuer'] == issuer:
                   temp2.append(i)
                 else:
@@ -152,124 +176,121 @@ class Peers:
                   temp2 = [i]
                 issuer = i['issuer']
               temp1.append(temp2)
-              #print('issuers temp', temp1)
+
+              # make 'resource' part of message to send back to another peer to handle the requests
               arr_rec = []
               for t in temp1:
                 to_send = []
                 send_to = t[0]['issuer']
                 for j in t:
                   to_send.append(j['resource'])
-                #print('SEND', to_send, send_to)
                 if len(to_send) == 1:
                   arr_rec.append({'resource': to_send[0], 'issuer': send_to})
                 else:
                   arr_rec.append({'resource': to_send, 'issuer':send_to })
+
               return_messages.append({'type': 'request', 'sender': self.name, 'reciever': message['sender'], 'resource': arr_rec})
 
+        # credentials not unlocked and not held by peer, so make requests for them
         else:
-            #print('self does not have resource',requests)
-            #print('resource',resource)
             for r in resource:
               return_messages.append({'type': 'request', 'sender': self.name, 'reciever': self.holders[r], 'resource': [{'resource': r, 'issuer': self.holders[r]}]})
 
       if len(to_offer) > 0:
-        #print('to_offer',to_offer)
         if len(to_offer) == 1:
           return_messages.append({'type': 'offer', 'sender': self.name, 'reciever': message['sender'], 'resource': to_offer[0]})
         else:
           return_messages.append({'type': 'offer', 'sender': self.name, 'reciever': message['sender'], 'resource': to_offer})
-      print('return messges', return_messages)
-      #print('\n')
+      
+      # list of messages being sent back
       return return_messages
 
 
     if(message['type'] == 'offer'):
-      print('\n')
-      for r in Mrec[0]['resource']:
-        if(r['resource'] == message['resource']):
-          return ["DONE"]
 
-      print('message',message)
+      #if offer is of resource initially requested then the auth has successfully completed 
+      for r in Mrec[0]['resource']:
+        if(set(r['resource']) == set(message['resource'])):
+          return [{'type':'success','content': 'resource {} was succesfully recieved'.format(message['resource']) }]
+
+      # add offer of resource to peers recieved credentials 
       if isinstance(message['resource'],list):
         for creds in message['resource']:
           self.credentials_recieved.append(creds)
       else:
         self.credentials_recieved.append(message['resource'])
 
+      # requests to peer 
       my_recieved = [request for request in Mrec if request['reciever'] == self.name and request['type'] == 'request']
+
+      # offers that peer has sent 
       offers_sent = [request for request in Mrec if request['sender'] == self.name and request['type'] == 'offer']
-      print('my recieved: ', *my_recieved,sep='\n')
-      print('offers sent: ', *offers_sent, sep='\n')
+
       rec = []
       unsent = []
-      my_reciever_iterate = my_recieved
+
+      # finds which requests that the peer has already sent offers for 
+      #print('my_recieved',*my_recieved,sep='\n')
       for m in my_recieved:
-        print('MMMM',m)
         sender = m['sender']
         rrecieved = []
         for r in m['resource']:
-          rrecieved.append(r['resource'])
+          if(isinstance(r['resource'],list)):
+            for c in r['resource']:
+              rrecieved.append(c)
+          else:
+            rrecieved.append(r['resource'])
         for o in offers_sent:
           offers = set()
           if not isinstance(o['resource'],list):
             offers.add(o['resource'])
           else:
             offers = set(o['resource'])
-          print('offers',offers)
-          print('rreciev', set(rrecieved))
-          print('sender',sender)
+          
+         #print('offers',offers)
+         # print('rrecieved',rrecieved)
           if(offers == set(rrecieved) and o['reciever'] == sender):
-            print('my_recieved',my_recieved)
-            print('pop', my_recieved.index(m))
             unsent.append(m)
-            #my_recieved.pop(my_recieved.index(m))
-            print('sent resource', o['resource'])
         
+      # remove requests that have already been offered 
       for messages in unsent:
         my_recieved.pop(my_recieved.index(messages))
-      print('TEST', *my_reciever_iterate,sep='\n')
-      print('MY REC', *my_recieved,sep='\n')
-      print('UNSENT',*unsent, sep='\n')
-         
 
-
-
+      # make list of resources by request that still need to be offered by the peer 
       for r in my_recieved:
         temp = []
         for res in r['resource']:
-          temp.append(res['resource'])
+          if(isinstance(res['resource'],list)):
+            temp.extend(res['resource'])
+          else:
+            temp.append(res['resource'])
         rec.append(temp)
 
       return_list = []
 
-      print('creds ', self.credentials_recieved)
+      # make list of all credentials that the peer has ( resources it's the holder of, and resources it recieved from other peers )
       held = [h for h in self.holders if self.holders[h] == self.name]
-      print('held', held)
-      print('credentilas_received',self.credentials_recieved)
       my_creds = held + self.credentials_recieved
-      print('my_creds',my_creds)
 
-      print('REC',rec)
-
+      # check if resources that still need to be offered are unlocked 
       valid = self.isResourceUnlocked(rec,my_creds)
 
+      # offer is able to be made from request 
       if(valid):
         for r in rec:
-          print('r',r)
+          # if peer has all the credentials needed to complete the request 
           if(set(my_creds).intersection(set(r)) == set(r)):
               return_list.extend(list(set(my_creds).intersection(set(r))))
-              print('intersection to send ',set(my_creds).intersection(set(r)))
-        print('return ', return_list)
-        #print('\n')
+        # based on resources being offered, find sender of request for all those resources
         sender = self.findSender(my_recieved,return_list)
+        if(sender == None and len(return_list) > 0):
+          return [{'type':'error', 'content': 'error completing request'}]
         
-        print('sender',sender)
+        # either send one resource as an offer, or send a list of resources as an offer
         if len(return_list) == 1:
           return [{'type':'offer', 'sender': self.name, 'reciever': sender, 'resource': return_list[0]}]
         elif len(return_list) > 1:
           return [{'type':'offer', 'sender': self.name, 'reciever': sender, 'resource': return_list}]
-        print('\n')
-
         
 if __name__ == "__main__":
     client = Peers(name='client')
@@ -285,7 +306,7 @@ if __name__ == "__main__":
     # send message to appropriate reciever
     def processMessage(m):
       Mrec.append(m)
-      sent = {}
+      sent = []
       if m['reciever'] == 'client':
         sent = client.resolver(m,Mrec)
       elif m['reciever'] == 'rs':
@@ -298,11 +319,24 @@ if __name__ == "__main__":
         for s in sent:
           queue.append(s)
 
-    while(queue != [] and len(Mrec) < 20):
+    while(queue != [] ):
       m = queue.pop(0)
-      if isinstance(m,dict):
-        processMessage(m)
+      if m['type'] == 'success' or m['type'] == 'error':
+        print(m['content'])
+        print('\n')
+        break;
       else:
-        Mrec.append(m)
-        print(m)
-    print(*Mrec, sep='\n')
+        processMessage(m)
+
+    #if last offer isnt for first response then auth failed
+    initialMessage = Mrec[0]['resource'][0]['resource']
+
+    lastOffer = ''
+    if(Mrec[-1]['type'] == 'offer'):
+      lastOffer = Mrec[-1]['resource']
+    if(initialMessage != lastOffer):
+      print('Could not complete request for {}'.format(initialMessage))
+
+
+    if(showMessages):
+      print(*Mrec, sep='\n')
